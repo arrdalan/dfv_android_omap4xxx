@@ -31,7 +31,9 @@
 #include "ErrorUtils.h"
 
 #define TOUCH_FOCUS_RANGE 0xFF
-#define AF_IMAGE_CALLBACK_TIMEOUT 5000000 //5 seconds timeout
+/* Use this both for local and remote camera. */
+#define AF_IMAGE_CALLBACK_TIMEOUT 50000 //0.05 seconds timeout
+
 #define AF_VIDEO_CALLBACK_TIMEOUT 2800000 //2.8 seconds timeout
 
 namespace android {
@@ -91,6 +93,7 @@ status_t OMXCameraAdapter::doAutoFocus()
     if ( OMX_StateInvalid == mComponentState )
       {
         CAMHAL_LOGEA("OMX component in Invalid state");
+        
         returnFocusStatus(false);
         return -EINVAL;
       }
@@ -98,6 +101,7 @@ status_t OMXCameraAdapter::doAutoFocus()
     if ( OMX_StateExecuting != mComponentState )
         {
         CAMHAL_LOGEA("OMX component not in executing state");
+            
         returnFocusStatus(false);
         return NO_ERROR;
         }
@@ -406,7 +410,6 @@ status_t OMXCameraAdapter::returnFocusStatus(bool timeoutReached)
 
     if ( NO_ERROR == ret )
         {
-
         if ( !timeoutReached )
             {
             ret = checkFocus(&eFocusStatus);
@@ -417,10 +420,9 @@ status_t OMXCameraAdapter::returnFocusStatus(bool timeoutReached)
                 }
             }
         }
-
+        
     if ( NO_ERROR == ret )
         {
-
         if ( timeoutReached )
             {
             focusStatus = CameraHalEvent::FOCUS_STATUS_FAIL;
@@ -793,7 +795,7 @@ void OMXCameraAdapter::handleFocusCallback() {
     status_t ret = NO_ERROR;
     BaseCameraAdapter::AdapterState nextState;
     BaseCameraAdapter::getNextState(nextState);
-
+    
     OMX_INIT_STRUCT(eFocusStatus, OMX_PARAM_FOCUSSTATUSTYPE);
 
     ret = checkFocus(&eFocusStatus);
@@ -831,9 +833,10 @@ void OMXCameraAdapter::handleFocusCallback() {
         case OMX_FocusStatusUnableToReach:
         default:
             focusStatus = CameraHalEvent::FOCUS_STATUS_DONE;
+                        
             break;
     }
-
+            
     notifyFocusSubscribers(focusStatus);
 }
 

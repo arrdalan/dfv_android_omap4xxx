@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <utils/dfv.h>
 
 #define COMPONENT_NAME "OMX.TI.DUCATI1.VIDEO.DECODER.secure"
 
@@ -61,7 +62,12 @@ OMX_ERRORTYPE OMX_ComponentInit(OMX_HANDLETYPE hComponent)
 	TIMM_OSAL_Memcpy(pComponentPrivate->cCompName, COMPONENT_NAME,
 	    strlen(COMPONENT_NAME) + 1);
 
-	pComponentPrivate->secure_misc_drv_fd = open("/dev/rproc_user", O_SYNC | O_RDWR);
+	if (file_present("/dev/rproc_user2")) {
+	    pComponentPrivate->secure_misc_drv_fd = open("/dev/rproc_user2", O_SYNC | O_RDWR);
+	} else {
+	    pComponentPrivate->secure_misc_drv_fd = open("/dev/rproc_user", O_SYNC | O_RDWR);
+	}
+	
 	if (pComponentPrivate->secure_misc_drv_fd < 0)
 	{
 		DOMX_ERROR("Can't open rproc_user device 0x%x\n", errno);

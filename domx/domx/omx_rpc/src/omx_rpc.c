@@ -58,6 +58,7 @@
 #include <OMX_Types.h>
 #include <timm_osal_interfaces.h>
 #include <timm_osal_trace.h>
+#include <utils/dfv.h>
 
 
 /*-------program files ----------------------------------------*/
@@ -126,9 +127,15 @@ RPC_OMX_ERRORTYPE RPC_InstanceInit(OMX_STRING cComponentName,
 
 	/*Assuming that open maintains an internal count for multi instance */
 	DOMX_DEBUG("Calling open on the device");
+	
 	while (1)
 	{
-		pRPCCtx->fd_omx = open("/dev/rpmsg-omx1", O_RDWR);
+		if (file_present("/dev/rpmsg-omx12")) {
+			pRPCCtx->fd_omx = open("/dev/rpmsg-omx12", O_RDWR);
+		} else {
+			pRPCCtx->fd_omx = open("/dev/rpmsg-omx1", O_RDWR);
+		}
+		
 		if(pRPCCtx->fd_omx >= 0 || errno != ENOENT || nAttempts == 15)
 			break;
 		DOMX_DEBUG("errno from open= %d, REATTEMPTING OPEN!!!!",errno);
@@ -220,12 +227,18 @@ RPC_OMX_ERRORTYPE RPC_InstanceDeInit(OMX_HANDLETYPE hRPCCtx)
 		} else if (pRPCCtx->cbThread)
 		{
 			DOMX_DEBUG("Waiting for cb thread to exit");
+			/*
+			 * FIXME: For some reason, this blocks in Rio.
+			 * I remove it for now.
+			 */
+			/**** 
 			status = pthread_join(pRPCCtx->cbThread, NULL);
 			if (status != 0)
 			{
 				DOMX_ERROR("Join for cb thread failed");
 				eRPCError = RPC_OMX_ErrorUndefined;
 			}
+			****/
 		}
 		DOMX_DEBUG("Closing the kill fd");
 		status = close(pRPCCtx->fd_killcb);
@@ -262,8 +275,8 @@ RPC_OMX_ERRORTYPE RPC_InstanceDeInit(OMX_HANDLETYPE hRPCCtx)
 			eRPCError = RPC_OMX_ErrorUndefined;
 		}
 	}
-
-	TIMM_OSAL_Free(pRPCCtx);
+	
+	////TIMM_OSAL_Free(pRPCCtx);
 
 	EXIT:
 		return eRPCError;
@@ -303,8 +316,9 @@ void *RPC_CallbackThread(void *data)
 
 		DOMX_DEBUG("Waiting for messages from remote core");
 		status = select(maxfd, &readfds, NULL, NULL, NULL);
-		RPC_assert(status > 0, RPC_OMX_ErrorUndefined,
-		    "select failed");
+		
+		////RPC_assert(status > 0, RPC_OMX_ErrorUndefined,
+		////    "select failed");
 
 		if (FD_ISSET(pRPCCtx->fd_killcb, &readfds))
 		{

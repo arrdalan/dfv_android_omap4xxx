@@ -307,6 +307,7 @@ void OMXCameraAdapter::performCleanupAfterError()
 {
     if(mCameraAdapterParameters.mHandleComp)
         {
+	
         ///Free the OMX component handle in case of error
         OMX_FreeHandle(mCameraAdapterParameters.mHandleComp);
         mCameraAdapterParameters.mHandleComp = NULL;
@@ -460,7 +461,9 @@ status_t OMXCameraAdapter::setParameters(const CameraParameters &params)
     cap = &mCameraAdapterParameters.mCameraPortParams[mCameraAdapterParameters.mPrevPortIndex];
 
     params.getPreviewSize(&w, &h);
+    
     frameRate = params.getPreviewFrameRate();
+    
     minFramerate = params.getInt(TICameraParameters::KEY_MINFRAMERATE);
     maxFramerate = params.getInt(TICameraParameters::KEY_MAXFRAMERATE);
     if ( ( 0 < minFramerate ) &&
@@ -482,6 +485,9 @@ status_t OMXCameraAdapter::setParameters(const CameraParameters &params)
             {
             cap->mMinFrameRate = minFramerate;
             cap->mMaxFrameRate = maxFramerate;
+            /* uncomment the next line to force 30 frames per second */
+            //cap->mMinFrameRate = 30;
+            
             setVFramerate(cap->mMinFrameRate, cap->mMaxFrameRate);
             }
         }
@@ -1405,7 +1411,7 @@ status_t OMXCameraAdapter::switchToLoaded()
         }
 
     mComponentState = OMX_StateLoaded;
-
+    
     ///Register for Preview port ENABLE event
     ret = RegisterForEvent(mCameraAdapterParameters.mHandleComp,
                            OMX_EventCmdComplete,
@@ -1418,7 +1424,7 @@ status_t OMXCameraAdapter::switchToLoaded()
         CAMHAL_LOGEB("Error in registering for event %d", ret);
         goto EXIT;
         }
-
+     
     ///Enable Preview Port
     eError = OMX_SendCommand(mCameraAdapterParameters.mHandleComp,
                              OMX_CommandPortEnable,
@@ -1454,7 +1460,7 @@ status_t OMXCameraAdapter::switchToLoaded()
         CAMHAL_LOGEA("Preview enable timedout");
 
         goto EXIT;
-        }
+        }       
 
     return (ret | ErrorUtils::omxToAndroidError(eError));
 
@@ -1647,7 +1653,7 @@ status_t OMXCameraAdapter::UseBuffersPreview(void* bufArr, int num)
         CAMHAL_LOGEB("OMX_SetParameter - %x", eError);
         }
     GOTO_EXIT_IF((eError!=OMX_ErrorNone), eError);
-
+    
     OMX_BUFFERHEADERTYPE *pBufferHdr;
     for(int index=0;index<num;index++) {
 
@@ -1839,6 +1845,14 @@ status_t OMXCameraAdapter::startPreview()
     mStateSwitchLock.unlock();
 
     apply3Asettings(mParameters3A);
+    /* There is a data race here. If all the queued buffers are filled before
+     * we finish executing this function and then commit the state in
+     * BaseCameraAdapter::sendCommand() (case CameraAdapter::CAMERA_START_PREVIEW),
+     * our flow will be broken. This indeed happens with Rio due to longer latency.
+     * Therefore, we move the queueing to the end of the function. The fix does
+     * not completely remove the data race, it just alleviates it.
+     */
+    /**** 
     //Queue all the buffers on preview port
     for(int index=0;index< mPreviewData->mMaxQueueable;index++)
         {
@@ -1855,7 +1869,7 @@ status_t OMXCameraAdapter::startPreview()
 #endif
         GOTO_EXIT_IF((eError!=OMX_ErrorNone), eError);
         }
-
+    
     if ( mMeasurementEnabled )
         {
 
@@ -1872,6 +1886,7 @@ status_t OMXCameraAdapter::startPreview()
             }
 
         }
+    ****/
 
     // Enable Ancillary data. The nDCCStatus field is used to signify
     // whether the preview frame is a snapshot
@@ -1904,6 +1919,41 @@ status_t OMXCameraAdapter::startPreview()
     mLastFrameCount = 0;
     mIter = 1;
     mLastFPSTime = systemTime();
+    
+    /* See the earlier comment as to why we moved this code block here. */
+    //Queue all the buffers on preview port
+    for(int index=0;index< mPreviewData->mMaxQueueable;index++)
+        {
+        CAMHAL_LOGDB("Queuing buffer on Preview port - 0x%x", (uint32_t)mPreviewData->mBufferHeader[index]->pBuffer);
+        eError = OMX_FillThisBuffer(mCameraAdapterParameters.mHandleComp,
+                    (OMX_BUFFERHEADERTYPE*)mPreviewData->mBufferHeader[index]);
+        if(eError!=OMX_ErrorNone)
+            {
+            CAMHAL_LOGEB("OMX_FillThisBuffer-0x%x", eError);
+            }
+        mFramesWithDucati++;
+#ifdef DEGUG_LOG
+        mBuffersWithDucati.add((uint32_t)mPreviewData->mBufferHeader[index]->pBuffer,1);
+#endif
+        GOTO_EXIT_IF((eError!=OMX_ErrorNone), eError);
+        }
+        
+    if ( mMeasurementEnabled )
+        {
+
+        for(int index=0;index< mPreviewData->mNumBufs;index++)
+            {
+            CAMHAL_LOGDB("Queuing buffer on Measurement port - 0x%x", (uint32_t) measurementData->mBufferHeader[index]->pBuffer);
+            eError = OMX_FillThisBuffer(mCameraAdapterParameters.mHandleComp,
+                            (OMX_BUFFERHEADERTYPE*) measurementData->mBufferHeader[index]);
+            if(eError!=OMX_ErrorNone)
+                {
+                CAMHAL_LOGEB("OMX_FillThisBuffer-0x%x", eError);
+                }
+            GOTO_EXIT_IF((eError!=OMX_ErrorNone), eError);
+            }
+
+        }    
 
     LOG_FUNCTION_NAME_EXIT;
 
@@ -2007,7 +2057,7 @@ status_t OMXCameraAdapter::stopPreview()
     }
 
     CAMHAL_LOGDB("Average framerate: %f", mFPS);
-
+    
     //Avoid state switching of the OMX Component
     ret = flushBuffers();
     if ( NO_ERROR != ret )
@@ -2015,7 +2065,7 @@ status_t OMXCameraAdapter::stopPreview()
         CAMHAL_LOGEB("Flush Buffers failed 0x%x", ret);
         goto EXIT;
         }
-
+       
     ///Register for Preview port Disable event
     ret = RegisterForEvent(mCameraAdapterParameters.mHandleComp,
                            OMX_EventCmdComplete,
@@ -2028,7 +2078,7 @@ status_t OMXCameraAdapter::stopPreview()
                              OMX_CommandPortDisable,
                              mCameraAdapterParameters.mPrevPortIndex,
                              NULL);
-
+    
     ///Free the OMX Buffers
     for ( int i = 0 ; i < mPreviewData->mNumBufs ; i++ )
         {
@@ -2263,7 +2313,7 @@ status_t OMXCameraAdapter::autoFocus()
 {
     status_t ret = NO_ERROR;
     TIUTILS::Message msg;
-
+    
     LOG_FUNCTION_NAME;
 
     {
@@ -2278,7 +2328,7 @@ status_t OMXCameraAdapter::autoFocus()
             }
         }
     }
-
+    
     msg.command = CommandHandler::CAMERA_PERFORM_AUTOFOCUS;
     msg.arg1 = mErrorNotifier;
     ret = mCommandHandler->put(&msg);
@@ -2639,6 +2689,7 @@ OMX_ERRORTYPE OMXCameraAdapter::OMXCameraAdapterEventHandler(OMX_IN OMX_HANDLETY
             if ( NULL != mErrorNotifier && ( ( OMX_U32 ) OMX_ErrorHardware == nData1 ) && mComponentState != OMX_StateInvalid)
               {
                 CAMHAL_LOGEA("***Got Fatal Error Notification***\n");
+                
                 mComponentState = OMX_StateInvalid;
                 /*
                 Remove any unhandled events and
@@ -2954,11 +3005,12 @@ OMX_ERRORTYPE OMXCameraAdapter::OMXCameraAdapterFillBufferDone(OMX_IN OMX_HANDLE
 
     if (pBuffHeader->nOutputPortIndex == OMX_CAMERA_PORT_VIDEO_OUT_PREVIEW)
         {
-
+        	
         if ( ( PREVIEW_ACTIVE & state ) != PREVIEW_ACTIVE )
             {
             return OMX_ErrorNone;
             }
+                
 
         if ( mWaitingForSnapshot )
             {
@@ -2973,7 +3025,7 @@ OMX_ERRORTYPE OMXCameraAdapter::OMXCameraAdapterFillBufferDone(OMX_IN OMX_HANDLE
                 mPending3Asettings |= SetFocus;
                 }
             }
-
+            
         recalculateFPS();
             {
             Mutex::Autolock lock(mFaceDetectionLock);
@@ -3030,7 +3082,7 @@ OMX_ERRORTYPE OMXCameraAdapter::OMXCameraAdapterFillBufferDone(OMX_IN OMX_HANDLE
             }
 
         //ALOGV("FBD pBuffer = 0x%x", pBuffHeader->pBuffer);
-
+        
         if( mWaitingForSnapshot )
           {
             mSnapshotCount++;
@@ -3041,7 +3093,7 @@ OMX_ERRORTYPE OMXCameraAdapter::OMXCameraAdapterFillBufferDone(OMX_IN OMX_HANDLE
                 notifyShutterSubscribers();
               }
           }
-
+          
         stat = sendCallBacks(cameraFrame, pBuffHeader, mask, pPortParam);
         mFramesWithDisplay++;
 
@@ -3131,10 +3183,11 @@ OMX_ERRORTYPE OMXCameraAdapter::OMXCameraAdapterFillBufferDone(OMX_IN OMX_HANDLE
             if ( mBracketingEnabled )
                 {
                 doBracketing(pBuffHeader, typeOfFrame);
+                
                 return eError;
                 }
             }
-
+            
         if ( 1 > mCapturedFrames )
             {
             goto EXIT;

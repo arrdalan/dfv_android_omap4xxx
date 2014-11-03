@@ -269,7 +269,7 @@ int CameraHal::setParameters(const CameraParameters& params)
                 if ( isParameterValid(valstr, mCameraProperties->get(CameraProperties::SUPPORTED_PREVIEW_FORMATS))) {
                     mParameters.setPreviewFormat(valstr);
                 } else {
-                    CAMHAL_LOGEB("Invalid preview format.Supported: %s",  mCameraProperties->get(CameraProperties::SUPPORTED_PREVIEW_FORMATS));
+                    CAMHAL_LOGEB("Invalid preview format.Supported: %s",  mCameraProperties->get(CameraProperties::SUPPORTED_PREVIEW_FORMATS));                    
                     return BAD_VALUE;
                 }
             }
@@ -593,6 +593,7 @@ int CameraHal::setParameters(const CameraParameters& params)
             CAMHAL_LOGEA("ERROR: Max FPS is smaller than Min FPS!");
             return BAD_VALUE;
           }
+          
         CAMHAL_LOGDB("SET FRAMERATE %d", framerate);
         mParameters.setPreviewFrameRate(framerate);
         mParameters.set(CameraParameters::KEY_PREVIEW_FPS_RANGE, params.get(CameraParameters::KEY_PREVIEW_FPS_RANGE));
@@ -1235,6 +1236,7 @@ status_t CameraHal::allocImageBufs(unsigned int width, unsigned int height, size
     if ( NO_ERROR == ret )
         {
         bytes = ((bytes+4095)/4096)*4096;
+        
         mImageBufs = (int32_t *)mMemoryManager->allocateBuffer(0, 0, previewFormat, bytes, bufferCount);
 
         CAMHAL_LOGDB("Size of Image cap buffer = %d", bytes);
@@ -1446,6 +1448,9 @@ status_t CameraHal::startPreview()
       LOG_FUNCTION_NAME_EXIT;
       return ALREADY_EXISTS;
     }
+    
+    /* Fixing the resolution */
+    mParameters.setPreviewSize(128, 96);
 
     if ( NULL != mCameraAdapter ) {
       ret = mCameraAdapter->setParameters(mParameters);
@@ -2473,7 +2478,7 @@ status_t CameraHal::takePicture( )
     int burst;
     const char *valstr = NULL;
     unsigned int bufferCount = 1;
-
+    
     Mutex::Autolock lock(mLock);
 
 #if PPM_INSTRUMENTATION || PPM_INSTRUMENTATION_ABS
@@ -2593,6 +2598,7 @@ status_t CameraHal::takePicture( )
 
         if (  (NO_ERROR == ret) && ( NULL != mCameraAdapter ) )
             {
+            
             desc.mBuffers = mImageBufs;
             desc.mOffsets = mImageOffsets;
             desc.mFd = mImageFd;

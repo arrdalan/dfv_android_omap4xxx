@@ -65,6 +65,7 @@
 
 #include <linux/rpmsg_omx.h>
 #include "rpmsg_omx_defs.h"
+#include <fcntl.h>
 
 /******************************************************************
  *   EXTERNS
@@ -103,6 +104,17 @@
     RPC_assert(status >= 0, RPC_OMX_ErrorUndefined, "Write failed"); \
     eError = TIMM_OSAL_ReadFromPipe(hCtx->pMsgPipe[nFxnIdx], &pRetPacket, \
         RPC_MSG_SIZE_FOR_PIPE, (TIMM_OSAL_U32 *)(&nSize), TIMM_OSAL_SUSPEND); \
+    RPC_assert(eError == TIMM_OSAL_ERR_NONE, eError, \
+        "Read failed"); \
+    } while(0)
+    	    
+#define RPC_sendPacket_sync2(hCtx, pPacket, nPacketSize, nFxnIdx, pRetPacket, nSize) do { \
+    status = write(hCtx->fd_omx, pPacket, nPacketSize); \
+    RPC_freePacket(pPacket); \
+    pPacket = NULL; \
+    if(status < 0 ) DOMX_ERROR("DOMX Write failed 0x%x %d",status,status); \
+    RPC_assert(status >= 0, RPC_OMX_ErrorUndefined, "Write failed"); \
+    eError = TIMM_OSAL_ERR_NONE; \
     RPC_assert(eError == TIMM_OSAL_ERR_NONE, eError, \
         "Read failed"); \
     } while(0)
@@ -181,6 +193,7 @@ RPC_OMX_ERRORTYPE RPC_GetHandle(OMX_HANDLETYPE hRPCCtx,
 
 	nFxnIdx = RPC_OMX_FXN_IDX_GET_HANDLE;
 	RPC_getPacket(nPacketSize, pPacket);
+	
 	RPC_initPacket(pPacket, pOmxPacket, pData, nFxnIdx, nPacketSize);
 
 	DOMX_DEBUG("Packing data");
@@ -201,6 +214,7 @@ RPC_OMX_ERRORTYPE RPC_GetHandle(OMX_HANDLETYPE hRPCCtx,
 
 	if (*eCompReturn == OMX_ErrorNone)
 	{
+		
 		pRetData = ((struct omx_packet *) pRetPacket)->data;
 		RPC_GETFIELDVALUE(pRetData, nPos, hComp, OMX_HANDLETYPE);
 		DOMX_DEBUG("Remote Handle 0x%x", hComp);
@@ -231,8 +245,6 @@ RPC_OMX_ERRORTYPE RPC_GetHandle(OMX_HANDLETYPE hRPCCtx,
 	return eRPCError;
 }
 
-
-
 /* ===========================================================================*/
 /**
  * @name RPC_FreeHandle()
@@ -256,7 +268,7 @@ RPC_OMX_ERRORTYPE RPC_FreeHandle(OMX_HANDLETYPE hRPCCtx,
 	OMX_HANDLETYPE hComp = hCtx->hRemoteHandle;
 	struct omx_packet *pOmxPacket = NULL;
 
-	DOMX_ENTER("");
+	DOMX_ENTER("");	
 
 	nFxnIdx = RPC_OMX_FXN_IDX_FREE_HANDLE;
 	RPC_getPacket(nPacketSize, pPacket);
@@ -268,11 +280,11 @@ RPC_OMX_ERRORTYPE RPC_FreeHandle(OMX_HANDLETYPE hRPCCtx,
 	RPC_SETFIELDVALUE(pData, nPos, nOffset, OMX_U32);
 
 	RPC_SETFIELDVALUE(pData, nPos, hComp, OMX_HANDLETYPE);
-
-	RPC_sendPacket_sync(hCtx, pPacket, nPacketSize, nFxnIdx, pRetPacket,
+	
+	RPC_sendPacket_sync2(hCtx, pPacket, nPacketSize, nFxnIdx, pRetPacket,
 	    nSize);
-
-	*eCompReturn = (OMX_ERRORTYPE) (((struct omx_packet *) pRetPacket)->result);
+	
+	*eCompReturn = OMX_ErrorNone;
 
       EXIT:
 	if (pPacket)
@@ -982,6 +994,28 @@ RPC_OMX_ERRORTYPE RPC_AllocateBuffer(OMX_HANDLETYPE hRPCCtx,
 	return eRPCError;
 }
 
+static OMX_U32 translate_to_ion_handle(OMX_U32 pvr_handle)
+{
+	int fd;
+	OMX_U32 ion_handle;
+		
+	fd = open("/dev/dfvclient_pvr", O_RDWR);
+   	
+	if (fd >= 0) {
+		/* Remote camera case */
+		write(fd, &pvr_handle, sizeof(int));
+		read(fd, &ion_handle, sizeof(int));
+		close(fd);
+		if (ion_handle)
+			return ion_handle;
+		else
+			return pvr_handle;
+	} else {
+		/* Local camera case */
+		return pvr_handle;
+	}	
+}
+
 /* ===========================================================================*/
 /**
  * @name RPC_UseBuffer()
@@ -1050,18 +1084,19 @@ RPC_OMX_ERRORTYPE RPC_UseBuffer(OMX_HANDLETYPE hRPCCtx,
 	RPC_SETFIELDVALUE(pData, nPos, pAppPrivate, OMX_PTR);
 	RPC_SETFIELDVALUE(pData, nPos, nSizeBytes, OMX_U32);
 
-	RPC_SETFIELDVALUE(pData, nPos, pBuffer, OMX_U32);
+	RPC_SETFIELDVALUE(pData, nPos, translate_to_ion_handle(pBuffer), OMX_U32);
 	DOMX_DEBUG("eMapInfo = %x",eMapInfo);
 	if (eMapInfo >= RPC_OMX_MAP_INFO_TWO_BUF)
 	{
 		RPC_SETFIELDVALUE(pData, nPos,
-		    ((OMX_TI_PLATFORMPRIVATE *) pBufferHdr->
-			pPlatformPrivate)->pAuxBuf1, OMX_U32);
+		    translate_to_ion_handle(((OMX_TI_PLATFORMPRIVATE *) pBufferHdr->
+			pPlatformPrivate)->pAuxBuf1), OMX_U32);
 		DOMX_DEBUG("UV buffer fd= %d",((OMX_TI_PLATFORMPRIVATE *)pBufferHdr->pPlatformPrivate)->pAuxBuf1);
 	}
 
 	if (eMapInfo >= RPC_OMX_MAP_INFO_THREE_BUF)
 	{
+		/* TODO: Do we need to translate this handle too? */
 		RPC_SETFIELDVALUE(pData, nPos,
 		    ((OMX_TI_PLATFORMPRIVATE *) pBufferHdr->
 			pPlatformPrivate)->pMetaDataBuffer, OMX_U32);
@@ -1078,10 +1113,11 @@ RPC_OMX_ERRORTYPE RPC_UseBuffer(OMX_HANDLETYPE hRPCCtx,
 	if (*eCompReturn == OMX_ErrorNone)
 	{
 		pRetData = ((struct omx_packet *) pRetPacket)->data;
+		
 		RPC_GETFIELDVALUE(pRetData, nPos, *pBufHeaderRemote, OMX_U32);
 		//save platform private before overwriting
 		pPlatformPrivate = (*ppBufferHdr)->pPlatformPrivate;
-
+		
 		/*Copying each field of the header separately due to padding issues in
 		   the buffer header structure */
 		RPC_GETFIELDVALUE(pRetData, nPos, pBufferHdr->nSize, OMX_U32);
@@ -1368,11 +1404,11 @@ RPC_OMX_ERRORTYPE RPC_FillThisBuffer(OMX_HANDLETYPE hRPCCtx,
 	    BufHdrRemote);
 
 #ifdef RPC_SYNC_MODE
-	RPC_sendPacket_sync(hCtx, pPacket, nPacketSize, nFxnIdx, pRetPacket,
+	RPC_sendPacket_sync2(hCtx, pPacket, nPacketSize, nFxnIdx, pRetPacket,
 	    nSize);
-
-	*eCompReturn = (OMX_ERRORTYPE) (((struct omx_packet *) pRetPacket)->result);
-
+	
+	*eCompReturn = OMX_ErrorNone;
+	
 #else
 	RPC_sendPacket_async(hCtx->ClientHndl[RCM_DEFAULT_CLIENT], pPacket,
 	    nFxnIdx);

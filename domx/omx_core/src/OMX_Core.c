@@ -52,6 +52,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #endif
+#include <utils/dfv.h>
 
 /** size for the array of allocated components.  Sets the maximum
  * number of components that can be allocated at once */
@@ -238,10 +239,16 @@ OMX_ERRORTYPE OMX_GetHandle(OMX_HANDLETYPE * pHandle,
 	strcat(buf, postfix);	/* are safe to use in this context. */
 
 #ifdef CHECK_SECURE_STATE
+	
         //Dont return errors from misc driver to the user if any.
         //Since this affects all usecases, secure and non-secure.
         //Do log the errors though.
-        secure_misc_drv_fd = open("/dev/rproc_user", O_SYNC | O_RDONLY);
+        if (file_present("/dev/rproc_user2")) {
+            secure_misc_drv_fd = open("/dev/rproc_user2", O_SYNC | O_RDONLY);
+        } else {
+            secure_misc_drv_fd = open("/dev/rproc_user", O_SYNC | O_RDONLY);
+        }
+        	
 	if (secure_misc_drv_fd < 0)
 	{
 		TIMM_OSAL_Error("Can't open misc driver device 0x%x\n", errno);
@@ -252,16 +259,19 @@ OMX_ERRORTYPE OMX_GetHandle(OMX_HANDLETYPE * pHandle,
 	{
 		TIMM_OSAL_Error("Can't read from the misc driver");
 	}
+	
         if(mode == enable && strstr(cComponentName,"secure") == NULL)
 	{
 		TIMM_OSAL_Error("non-secure component not supported in secure mode");
 		eError = OMX_ErrorComponentNotFound;
 	}
+	
 	ret = close(secure_misc_drv_fd);
 	if (ret < 0)
 	{
 		TIMM_OSAL_Error("Can't close the misc driver");
 	}
+	
         //Dont allow non-secure usecases if we are in secure state.
         //Else some of the memory regions will be unexpected firewalled.
         //This provides a clean exit in case we are in secure mode.
@@ -287,6 +297,7 @@ OMX_ERRORTYPE OMX_GetHandle(OMX_HANDLETYPE * pHandle,
 	pErr = dlerror();
 	CORE_assert(((pErr == NULL) && (pComponentInit != NULL)),
 	    OMX_ErrorInvalidComponent, NULL);
+	
 //#endif
 
 	/* We now can access the dll.  So, we need to call the "OMX_ComponentInit"
@@ -305,10 +316,12 @@ OMX_ERRORTYPE OMX_GetHandle(OMX_HANDLETYPE * pHandle,
 	componentType->nVersion.s.nRevision = 0;
 	componentType->nVersion.s.nStep = 0;
 
+	
 	eError = (*pComponentInit) (*pHandle);
 //eError = OMX_ComponentInit(*pHandle);
 	if (OMX_ErrorNone == eError)
 	{
+	
 		eError =
 		    (componentType->SetCallbacks) (*pHandle, pCallBacks,
 		    pAppData);
@@ -316,6 +329,7 @@ OMX_ERRORTYPE OMX_GetHandle(OMX_HANDLETYPE * pHandle,
 		    "Core: Error returned from component SetCallBack");
 	} else
 	{
+	
 		/* when the component fails to initialize, release the
 		   component handle structure */
 		free(*pHandle);
@@ -333,6 +347,7 @@ OMX_ERRORTYPE OMX_GetHandle(OMX_HANDLETYPE * pHandle,
 	{
 		TIMM_OSAL_Error("Core: Error in Mutex unlock");
 	}
+	
 	return (eError);
 }
 
@@ -376,7 +391,7 @@ OMX_ERRORTYPE OMX_FreeHandle(OMX_HANDLETYPE hComponent)
 	}
 
 	CORE_assert(i != COUNTOF(pModules), OMX_ErrorBadParameter, NULL);
-
+	
 	eError = pHandle->ComponentDeInit(hComponent);
 	if (eError != OMX_ErrorNone)
 	{
